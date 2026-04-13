@@ -89,11 +89,11 @@ async function extractTextFromUpload(file) {
   return buffer.toString("utf-8");
 }
 
-async function fetchAllDeputados() {
+async function fetchDeputadosByLegislatura(idLegislatura) {
   const all = [];
-  for (let pagina = 1; pagina <= 8; pagina++) {
+  for (let pagina = 1; pagina <= 12; pagina++) {
     const response = await fetch(
-      `https://dadosabertos.camara.leg.br/api/v2/deputados?itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`,
+      `https://dadosabertos.camara.leg.br/api/v2/deputados?idLegislatura=${idLegislatura}&itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`,
       { headers: { accept: "application/json" } }
     );
     if (!response.ok) break;
@@ -104,6 +104,19 @@ async function fetchAllDeputados() {
     if (rows.length < 100) break;
   }
   return all;
+}
+
+async function fetchAllDeputados() {
+  const candidatos = [
+    ...(await fetchDeputadosByLegislatura(57)),
+    ...(await fetchDeputadosByLegislatura(56)),
+  ];
+  const porId = new Map();
+  for (const dep of candidatos) {
+    if (!dep?.id) continue;
+    if (!porId.has(dep.id)) porId.set(dep.id, dep);
+  }
+  return [...porId.values()];
 }
 
 function findDeputadoByName(name, deputados) {
