@@ -121,33 +121,83 @@ async function extractTextFromUpload(file) {
 }
 
 async function fetchDeputadosByLegislatura(idLegislatura) {
+  const maxPaginas = 10;
+  const urls = Array.from({ length: maxPaginas }, (_, i) => {
+    const pagina = i + 1;
+    return `https://dadosabertos.camara.leg.br/api/v2/deputados?idLegislatura=${idLegislatura}&itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`;
+  });
+  const responses = await Promise.all(
+    urls.map((url) =>
+      fetch(url, { headers: { accept: "application/json" } }).then((r) => (r.ok ? r.json() : { dados: [] }))
+    )
+  );
   const all = [];
-  for (let pagina = 1; pagina <= 12; pagina++) {
-    const response = await fetch(
-      `https://dadosabertos.camara.leg.br/api/v2/deputados?idLegislatura=${idLegislatura}&itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`,
-      { headers: { accept: "application/json" } }
-    );
-    if (!response.ok) break;
-    const json = await response.json();
+  for (const json of responses) {
     const rows = Array.isArray(json?.dados) ? json.dados : [];
-    if (!rows.length) break;
     all.push(...rows);
-    if (rows.length < 100) break;
   }
   return all;
 }
 
 async function fetchAllDeputados() {
-  const candidatos = [
-    ...(await fetchDeputadosByLegislatura(57)),
-    ...(await fetchDeputadosByLegislatura(56)),
-  ];
+  const [leg57, leg56] = await Promise.all([fetchDeputadosByLegislatura(57), fetchDeputadosByLegislatura(56)]);
+  const candidatos = [...leg57, ...leg56];
   const porId = new Map();
   for (const dep of candidatos) {
     if (!dep?.id) continue;
     if (!porId.has(dep.id)) porId.set(dep.id, dep);
   }
   return [...porId.values()];
+}
+
+/** Coleta nomes únicos que precisam de match (relatores + autores por item). */
+function coletarNomesParaEnriquecer(parsedItems) {
+  const porChave = new Map();
+  function add(nome) {
+    const n = String(nome || "").trim();
+    if (!n || n === "-") return;
+    const key = normalizeName(n);
+    if (!key) return;
+    if (!porChave.has(key)) porChave.set(key, n);
+  }
+  for (const item of parsedItems) {
+    if (item.tipoItem !== "requerimento") add(item.relatorNome);
+    if (item.autorTipo === "senado") continue;
+    const candidatos = item.autoresNomes.length ? item.autoresNomes : item.autorNome ? [item.autorNome] : [];
+    for (const nome of candidatos) add(nome);
+  }
+  return porChave;
+}
+
+/** Pré-carrega cache local + API em paralelo (evita dezenas de awaits sequenciais). */
+async function buildEnrichCache(deputados, porChaveNome) {
+  const cache = new Map();
+  const precisaApi = [];
+  for (const [key, nomeOriginal] of porChaveNome.entries()) {
+    const local = findDeputadoByName(nomeOriginal, deputados);
+    if (local) cache.set(key, local);
+    else precisaApi.push(nomeOriginal);
+  }
+  const lote = 8;
+  for (let i = 0; i < precisaApi.length; i += lote) {
+    const fatia = precisaApi.slice(i, i + lote);
+    const resultados = await Promise.all(fatia.map((n) => fetchDeputadoByQuery(n)));
+    for (let j = 0; j < fatia.length; j++) {
+      const nome = fatia[j];
+      const found = resultados[j];
+      const key = normalizeName(nome);
+      if (found) cache.set(key, found);
+      else cache.set(key, null);
+    }
+  }
+  return cache;
+}
+
+function lookupEnrich(cache, name) {
+  if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
+  const key = normalizeName(name);
+  const found = cache.get(key);
+  return found || { nomeOriginal: name, partido: "-", uf: "-", id: null };
 }
 
 function findDeputadoByName(name, deputados) {
@@ -235,23 +285,17 @@ exports.handler = async (event) => {
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
     const deputados = await fetchAllDeputados();
-    const cache = new Map();
-    async function enrich(name) {
-      if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
-      const key = normalizeName(name);
-      if (!cache.has(key)) {
-        let found = findDeputadoByName(name, deputados);
-        if (!found) found = await fetchDeputadoByQuery(name);
-        cache.set(key, found);
-      }
-      return cache.get(key) || { nomeOriginal: name, partido: "-", uf: "-", id: null };
-    }
+    const nomesParaEnriquecer = coletarNomesParaEnriquecer(parsedItems);
+    const enrichCache = await buildEnrichCache(deputados, nomesParaEnriquecer);
 
     const itens = [];
     const autoresPartidosPorItem = new Map();
     const relatoresPorItem = new Map();
     for (const item of parsedItems) {
-      const relator = item.tipoItem === "requerimento" ? { nomeOriginal: "-", partido: "-", uf: "-", id: null } : await enrich(item.relatorNome);
+      const relator =
+        item.tipoItem === "requerimento"
+          ? { nomeOriginal: "-", partido: "-", uf: "-", id: null }
+          : lookupEnrich(enrichCache, item.relatorNome);
       const itemKey = `${item.item}|${item.projeto}`;
       if (relator?.id && relator.partido && relator.partido !== "-") {
         relatoresPorItem.set(itemKey, relator);
@@ -283,7 +327,7 @@ exports.handler = async (event) => {
       }
 
       for (const nomeAutor of autoresCandidatos) {
-        const autor = await enrich(nomeAutor);
+        const autor = lookupEnrich(enrichCache, nomeAutor);
         const row = {
           item: item.item,
           projeto: item.projeto,
