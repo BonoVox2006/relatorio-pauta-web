@@ -54,9 +54,13 @@ function parseAgendaItems(text) {
   while ((match = regex.exec(text)) !== null) {
     const item = match[2];
     const body = match[3].replace(/\s+/g, " ").trim();
-    const projeto = body.match(/(PROJETO\s+DE\s+[A-Z]+[\s\S]*?)(?=\s+RELATOR:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
-    let autorRaw = body.match(/-\s+do\s+(.+?)\s+-\s+que/i)?.[1] || body.match(/-\s+do\s+(.+?)\s+RELATOR:/i)?.[1] || "";
-    let relatorRaw = body.match(/RELATOR:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
+    const projeto =
+      body.match(/(PROJETO\s+DE\s+[A-Z]+[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
+    let autorRaw =
+      body.match(/-\s+d[oa]\s+(.+?)\s+-\s+que/i)?.[1] ||
+      body.match(/-\s+d[oa]\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
+      "";
+    let relatorRaw = body.match(/RELATOR(?:A)?:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
     const autorClass = classifyAutor(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
     blocks.push({
