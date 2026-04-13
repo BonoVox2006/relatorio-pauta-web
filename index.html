@@ -3,24 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Relatorio Gerencial de Pauta</title>
+    <title>Relatório Gerencial de Pauta</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="container">
       <header class="header">
-        <h1>Relatorio Gerencial de Pauta</h1>
-        <p>
-          Upload da pauta de comissao, extracao de autores e relatores, e
-          consolidacao com partido/UF pela API de Dados Abertos.
-        </p>
+        <h3>Departamento de Comissões</h3>
+        <h1>Relatório Gerencial de Pauta</h1>
+        <p>Dados Abertos da Câmara dos Deputados.</p>
       </header>
 
       <section class="card">
         <h2>Upload da pauta</h2>
         <form id="uploadForm">
           <input id="fileInput" name="pauta" type="file" accept=".pdf,.txt,.docx" required />
-          <button type="submit">Gerar relatorio</button>
+          <button type="submit">Gerar relatório</button>
         </form>
         <p class="hint">Formatos: PDF, DOCX e TXT.</p>
       </section>
@@ -34,8 +32,8 @@
         <h2>Resumo</h2>
         <div class="metrics">
           <div class="metric"><span>Itens</span><strong id="metricItens">0</strong></div>
-          <div class="metric"><span>Autores unicos</span><strong id="metricAutores">0</strong></div>
-          <div class="metric"><span>Relatores unicos</span><strong id="metricRelatores">0</strong></div>
+          <div class="metric"><span>Autores</span><strong id="metricAutores">0</strong></div>
+          <div class="metric"><span>Relatores</span><strong id="metricRelatores">0</strong></div>
         </div>
       </section>
 
