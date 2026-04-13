@@ -1,15 +1,13 @@
 {
   "name": "relatorio-pauta-web",
   "version": "1.0.0",
-  "type": "module",
-  "main": "server.js",
+  "main": "index.html",
   "scripts": {
-    "start": "node server.js"
+    "start": "echo \"Projeto pronto para Netlify\""
   },
   "dependencies": {
-    "express": "^4.21.2",
+    "lambda-multipart-parser": "^1.0.1",
     "mammoth": "^1.9.1",
-    "multer": "^1.4.5-lts.2",
     "pdf-parse": "^1.1.1"
   }
 }

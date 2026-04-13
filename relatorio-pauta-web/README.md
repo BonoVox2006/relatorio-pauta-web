@@ -12,21 +12,20 @@ Aplicativo web para gerar relatorio estatistico de pauta de comissao.
   - contagem por partido (autores e relatores)
   - detalhamento por item
 
-## Rodar local
+## Estrutura para Netlify
 
-```bash
-npm install
-npm start
-```
+- Frontend estatico: `index.html`, `app.js`, `style.css`
+- Backend serverless: `netlify/functions/report.js`
+- Configuracao Netlify: `netlify.toml`
 
-Acesse `http://localhost:3000`.
-
-## Deploy no Render
+## Deploy no Netlify
 
 1. Suba esta pasta para um repositorio no GitHub.
-2. No Render: **New +** > **Web Service**.
+2. No Netlify: **Add new site** > **Import an existing project**.
 3. Conecte o repositorio.
-4. Deploy usando o `render.yaml`.
+4. Build command: `npm install`
+5. Publish directory: `.`
+6. Deploy.
 
 ## Observacoes
 

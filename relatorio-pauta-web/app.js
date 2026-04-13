@@ -87,7 +87,7 @@ uploadForm.addEventListener("submit", async (event) => {
   formData.append("pauta", fileInput.files[0]);
 
   try {
-    const response = await fetch("/api/report", { method: "POST", body: formData });
+    const response = await fetch("/.netlify/functions/report", { method: "POST", body: formData });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Falha ao gerar relatorio.");
     renderReport(payload);
