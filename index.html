@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relatorio Gerencial de Pauta</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Relatorio Gerencial de Pauta</h1>
+        <p>
+          Upload da pauta de comissao, extracao de autores e relatores, e
+          consolidacao com partido/UF pela API de Dados Abertos.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>Upload da pauta</h2>
+        <form id="uploadForm">
+          <input id="fileInput" name="pauta" type="file" accept=".pdf,.txt,.docx" required />
+          <button type="submit">Gerar relatorio</button>
+        </form>
+        <p class="hint">Formatos: PDF, DOCX e TXT.</p>
+      </section>
+
+      <section class="card hidden" id="statusCard">
+        <h2>Status</h2>
+        <p id="statusText"></p>
+      </section>
+
+      <section class="card hidden" id="summaryCard">
+        <h2>Resumo</h2>
+        <div class="metrics">
+          <div class="metric"><span>Itens</span><strong id="metricItens">0</strong></div>
+          <div class="metric"><span>Autores unicos</span><strong id="metricAutores">0</strong></div>
+          <div class="metric"><span>Relatores unicos</span><strong id="metricRelatores">0</strong></div>
+        </div>
+      </section>
+
+      <section class="grid hidden" id="tablesGrid">
+        <article class="card">
+          <h3>Autores por partido</h3>
+          <table>
+            <thead><tr><th>Partido</th><th>Qtd.</th></tr></thead>
+            <tbody id="autorPartidoBody"></tbody>
+          </table>
+        </article>
+        <article class="card">
+          <h3>Relatores por partido</h3>
+          <table>
+            <thead><tr><th>Partido</th><th>Qtd.</th></tr></thead>
+            <tbody id="relatorPartidoBody"></tbody>
+          </table>
+        </article>
+      </section>
+
+      <section class="card hidden" id="itemsCard">
+        <h2>Detalhamento</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Projeto</th>
+                <th>Autor</th>
+                <th>Partido/UF</th>
+                <th>Relator</th>
+                <th>Partido/UF</th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

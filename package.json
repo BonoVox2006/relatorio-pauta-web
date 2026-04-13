@@ -1,0 +1,13 @@
+{
+  "name": "relatorio-pauta-web",
+  "version": "1.0.0",
+  "main": "index.html",
+  "scripts": {
+    "start": "echo \"Projeto pronto para Netlify\""
+  },
+  "dependencies": {
+    "lambda-multipart-parser": "^1.0.1",
+    "mammoth": "^1.9.1",
+    "pdf-parse": "^1.1.1"
+  }
+}
