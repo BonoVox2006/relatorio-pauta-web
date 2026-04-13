@@ -47,21 +47,50 @@ function classifyAutor(rawAutor) {
   return { tipo: "deputado_unico", nome: cleanPersonName(somentePrimeiroAutor) };
 }
 
+function splitAutores(rawAutor) {
+  const bruto = String(rawAutor || "").trim();
+  if (!bruto) return [];
+  const normalized = normalizeName(bruto);
+  if (/\bSENADO\b/.test(normalized)) return [];
+  if (/\b(COMISSAO|MESA)\b/.test(normalized)) return [];
+
+  let semRotulo = bruto
+    .replace(/\bdos\s+Srs?\.?\b/gi, "")
+    .replace(/\bdas\s+Sras?\.?\b/gi, "")
+    .replace(/\bdo\s+Sr\.?\b/gi, "")
+    .replace(/\bda\s+Sra\.?\b/gi, "")
+    .replace(/\bdo\s+Deputado\b/gi, "")
+    .replace(/\bda\s+Deputada\b/gi, "")
+    .replace(/\bdeputad[oa]s?\b/gi, "")
+    .replace(/\bdep(?:utad[oa])?\.?\b/gi, "")
+    .replace(/\s+e\s+outros?.*$/i, "")
+    .trim();
+
+  semRotulo = semRotulo.replace(/\s*\/\s*[A-Z]{2}\b/g, " ");
+  const partes = semRotulo
+    .split(/\s+e\s+|,\s*/i)
+    .map((p) => cleanPersonName(p))
+    .filter((p) => p.length >= 3);
+  return [...new Set(partes)];
+}
+
 function parseAgendaItems(text) {
   const blocks = [];
-  const regex = /(^|\n)\s*(\d+)\s*-\s*(PROJETO[\s\S]*?)(?=\n\s*\d+\s*-\s*PROJETO|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
+  const regex = /(^|\n)\s*(\d+)\s*-\s*([\s\S]*?)(?=\n\s*\d+\s*-\s*|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
     const item = match[2];
     const body = match[3].replace(/\s+/g, " ").trim();
+    if (!/^(PROJETO|REQUERIMENTO)\b/i.test(body)) continue;
     const projeto =
-      body.match(/(PROJETO\s+DE\s+[A-Z]+[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
+      body.match(/((?:PROJETO|REQUERIMENTO)[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
     let autorRaw =
-      body.match(/-\s+d[oa]\s+(.+?)\s+-\s+que/i)?.[1] ||
-      body.match(/-\s+d[oa]\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
+      body.match(/-\s+d[oa]s?\s+(.+?)\s+-\s+que/i)?.[1] ||
+      body.match(/-\s+d[oa]s?\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
       "";
     let relatorRaw = body.match(/RELATOR(?:A)?:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
     const autorClass = classifyAutor(autorRaw);
+    const autoresNomes = splitAutores(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
     blocks.push({
       item,
@@ -69,7 +98,9 @@ function parseAgendaItems(text) {
       autorBruto: autorRaw,
       autorTipo: autorClass.tipo,
       autorNome: autorClass.nome,
+      autoresNomes,
       relatorNome: relatorRaw,
+      tipoItem: /^REQUERIMENTO\b/i.test(body) ? "requerimento" : "projeto",
     });
   }
   return blocks;
@@ -217,27 +248,69 @@ exports.handler = async (event) => {
     }
 
     const itens = [];
+    const autoresPartidosPorItem = new Map();
     for (const item of parsedItems) {
-      let autor = { nomeOriginal: item.autorNome || item.autorBruto || "", partido: "-", uf: "-", id: null };
-      if (item.autorTipo === "deputado_unico" && item.autorNome) {
-        autor = await enrich(item.autorNome);
-      } else if (item.autorTipo === "senado") {
-        autor = { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null };
+      const relator = item.tipoItem === "requerimento" ? { nomeOriginal: "-", partido: "-", uf: "-", id: null } : await enrich(item.relatorNome);
+
+      if (item.autorTipo === "senado") {
+        itens.push({
+          item: item.item,
+          projeto: item.projeto,
+          autor: { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null },
+          relator,
+          autorTipo: item.autorTipo,
+          tipoItem: item.tipoItem,
+        });
+        continue;
       }
-      const relator = await enrich(item.relatorNome);
-      itens.push({ item: item.item, projeto: item.projeto, autor, relator, autorTipo: item.autorTipo });
+
+      const autoresCandidatos = item.autoresNomes.length ? item.autoresNomes : item.autorNome ? [item.autorNome] : [];
+      if (!autoresCandidatos.length) {
+        itens.push({
+          item: item.item,
+          projeto: item.projeto,
+          autor: { nomeOriginal: item.autorBruto || "-", partido: "-", uf: "-", id: null },
+          relator,
+          autorTipo: "nao_deputado_unico",
+          tipoItem: item.tipoItem,
+        });
+        continue;
+      }
+
+      for (const nomeAutor of autoresCandidatos) {
+        const autor = await enrich(nomeAutor);
+        const row = {
+          item: item.item,
+          projeto: item.projeto,
+          autor,
+          relator,
+          autorTipo: autor?.id ? "deputado_unico" : "nao_deputado_unico",
+          tipoItem: item.tipoItem,
+        };
+        itens.push(row);
+        if (autor?.id && autor.partido && autor.partido !== "-") {
+          const key = `${item.item}|${item.projeto}`;
+          if (!autoresPartidosPorItem.has(key)) autoresPartidosPorItem.set(key, new Set());
+          autoresPartidosPorItem.get(key).add(autor.partido);
+        }
+      }
     }
 
     const autoresValidos = itens.filter((x) => x.autorTipo === "deputado_unico" && x.autor?.id);
     const autoresUnicos = new Set(autoresValidos.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
     const relatoresValidos = itens.filter((x) => x.relator?.id);
     const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.relator?.nomeOriginal || "")).filter(Boolean)).size;
+    const partidosAutoresContabilizados = [];
+    for (const setPartidos of autoresPartidosPorItem.values()) {
+      for (const p of setPartidos.values()) partidosAutoresContabilizados.push(p);
+    }
 
     return json(200, {
-      totalItens: itens.length,
+      totalItens: parsedItems.length,
+      totalLinhasDetalhe: itens.length,
       autoresUnicos,
       relatoresUnicos,
-      autoresPorPartido: countByKey(autoresValidos.map((x) => x.autor?.partido)),
+      autoresPorPartido: countByKey(partidosAutoresContabilizados),
       relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.relator?.partido)),
       itens,
     });
