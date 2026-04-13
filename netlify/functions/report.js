@@ -15,7 +15,8 @@ function normalizeName(name) {
 function cleanPersonName(raw) {
   const semTitulo = String(raw || "")
     .replace(/^DEPUTAD[OA]\s+/i, "")
-    .replace(/^DEP\.?\s+/i, "")
+    .replace(/^DEP(?:UTAD[OA])?\.?\s+/i, "")
+    .replace(/^DEPª\.?\s+/i, "")
     .replace(/^SR\.?\s+/i, "")
     .replace(/^SRA\.?\s+/i, "")
     .replace(/\s*\(.*?\)\s*/g, " ");
@@ -37,13 +38,13 @@ function classifyAutor(rawAutor) {
   const n = normalizeName(bruto);
   if (/\bSENADO\b/.test(n)) return { tipo: "senado", nome: "" };
 
-  const temIndicadorDeputado = /\b(DEPUTAD|SR|SRA)\b/i.test(bruto);
-  const muitosAutores = /\b(E OUTR|E OUTRA|E OUTROS|COMISSAO|MESA)\b/i.test(bruto);
-  if (!temIndicadorDeputado || muitosAutores) {
+  const temIndicadorDeputado = /\b(DEPUTAD|DEP\.|DEP |SR|SRA)\b/i.test(bruto);
+  if (!temIndicadorDeputado || /\b(COMISSAO|MESA)\b/i.test(bruto)) {
     return { tipo: "nao_deputado_unico", nome: "" };
   }
 
-  return { tipo: "deputado_unico", nome: cleanPersonName(bruto) };
+  const somentePrimeiroAutor = bruto.replace(/\s+e\s+outr[oa]s?.*$/i, "");
+  return { tipo: "deputado_unico", nome: cleanPersonName(somentePrimeiroAutor) };
 }
 
 function parseAgendaItems(text) {
@@ -126,13 +127,32 @@ function findDeputadoByName(name, deputados) {
     }
   }
 
-  if (!best || bestScore < 20) return null;
+  if (!best || bestScore < 10) return null;
   return {
     nomeOriginal: name,
     nomeApi: best.nome || name,
     partido: best.siglaPartido || "-",
     uf: best.siglaUf || "-",
     id: best.id || null,
+  };
+}
+
+async function fetchDeputadoByQuery(name) {
+  const encoded = encodeURIComponent(name);
+  const response = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encoded}&itens=10`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) return null;
+  const json = await response.json();
+  const rows = Array.isArray(json?.dados) ? json.dados : [];
+  if (!rows.length) return null;
+  const dep = rows[0];
+  return {
+    nomeOriginal: name,
+    nomeApi: dep.nome || name,
+    partido: dep.siglaPartido || "-",
+    uf: dep.siglaUf || "-",
+    id: dep.id || null,
   };
 }
 
@@ -168,10 +188,14 @@ exports.handler = async (event) => {
 
     const deputados = await fetchAllDeputados();
     const cache = new Map();
-    function enrich(name) {
+    async function enrich(name) {
       if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
       const key = normalizeName(name);
-      if (!cache.has(key)) cache.set(key, findDeputadoByName(name, deputados));
+      if (!cache.has(key)) {
+        let found = findDeputadoByName(name, deputados);
+        if (!found) found = await fetchDeputadoByQuery(name);
+        cache.set(key, found);
+      }
       return cache.get(key) || { nomeOriginal: name, partido: "-", uf: "-", id: null };
     }
 
@@ -179,11 +203,11 @@ exports.handler = async (event) => {
     for (const item of parsedItems) {
       let autor = { nomeOriginal: item.autorNome || item.autorBruto || "", partido: "-", uf: "-", id: null };
       if (item.autorTipo === "deputado_unico" && item.autorNome) {
-        autor = enrich(item.autorNome);
+        autor = await enrich(item.autorNome);
       } else if (item.autorTipo === "senado") {
         autor = { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null };
       }
-      const relator = enrich(item.relatorNome);
+      const relator = await enrich(item.relatorNome);
       itens.push({ item: item.item, projeto: item.projeto, autor, relator, autorTipo: item.autorTipo });
     }
 
