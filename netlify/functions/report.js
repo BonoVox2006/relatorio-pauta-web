@@ -13,12 +13,37 @@ function normalizeName(name) {
 }
 
 function cleanPersonName(raw) {
-  return String(raw || "")
+  const semTitulo = String(raw || "")
     .replace(/^DEPUTAD[OA]\s+/i, "")
     .replace(/^DEP\.?\s+/i, "")
-    .replace(/\s*\(.*?\)\s*/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/^SR\.?\s+/i, "")
+    .replace(/^SRA\.?\s+/i, "")
+    .replace(/\s*\(.*?\)\s*/g, " ");
+
+  const semRuido = semTitulo
+    .replace(/\bhttps?:\/\/\S+/gi, " ")
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+    .replace(/\bPauta\b[\s\S]*$/i, " ")
+    .replace(/[^A-Za-zÀ-ÿ\s-]/g, " ");
+
+  return semRuido.replace(/\s+/g, " ").trim();
+}
+
+function classifyAutor(rawAutor) {
+  const bruto = String(rawAutor || "").trim();
+  if (!bruto) return { tipo: "desconhecido", nome: "" };
+
+  const n = normalizeName(bruto);
+  if (/\bSENADO\b/.test(n)) return { tipo: "senado", nome: "" };
+
+  const temIndicadorDeputado = /\b(DEPUTAD|SR|SRA)\b/i.test(bruto);
+  const muitosAutores = /\b(E OUTR|E OUTRA|E OUTROS|COMISSAO|MESA)\b/i.test(bruto);
+  if (!temIndicadorDeputado || muitosAutores) {
+    return { tipo: "nao_deputado_unico", nome: "" };
+  }
+
+  return { tipo: "deputado_unico", nome: cleanPersonName(bruto) };
 }
 
 function parseAgendaItems(text) {
@@ -31,9 +56,16 @@ function parseAgendaItems(text) {
     const projeto = body.match(/(PROJETO\s+DE\s+[A-Z]+[\s\S]*?)(?=\s+RELATOR:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
     let autorRaw = body.match(/-\s+do\s+(.+?)\s+-\s+que/i)?.[1] || body.match(/-\s+do\s+(.+?)\s+RELATOR:/i)?.[1] || "";
     let relatorRaw = body.match(/RELATOR:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
-    autorRaw = cleanPersonName(autorRaw);
+    const autorClass = classifyAutor(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
-    blocks.push({ item, projeto, autorNome: autorRaw, relatorNome: relatorRaw });
+    blocks.push({
+      item,
+      projeto,
+      autorBruto: autorRaw,
+      autorTipo: autorClass.tipo,
+      autorNome: autorClass.nome,
+      relatorNome: relatorRaw,
+    });
   }
   return blocks;
 }
@@ -113,28 +145,35 @@ exports.handler = async (event) => {
 
     const cache = new Map();
     async function enrich(name) {
-      if (!name) return { nomeOriginal: "", partido: "N/I", uf: "N/I", id: null };
+      if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
       const key = normalizeName(name);
       if (!cache.has(key)) cache.set(key, await fetchDeputadoByName(name));
-      return cache.get(key) || { nomeOriginal: name, partido: "N/I", uf: "N/I", id: null };
+      return cache.get(key) || { nomeOriginal: name, partido: "-", uf: "-", id: null };
     }
 
     const itens = [];
     for (const item of parsedItems) {
-      const autor = await enrich(item.autorNome);
+      let autor = { nomeOriginal: item.autorNome || item.autorBruto || "", partido: "-", uf: "-", id: null };
+      if (item.autorTipo === "deputado_unico" && item.autorNome) {
+        autor = await enrich(item.autorNome);
+      } else if (item.autorTipo === "senado") {
+        autor = { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null };
+      }
       const relator = await enrich(item.relatorNome);
-      itens.push({ item: item.item, projeto: item.projeto, autor, relator });
+      itens.push({ item: item.item, projeto: item.projeto, autor, relator, autorTipo: item.autorTipo });
     }
 
-    const autoresUnicos = new Set(itens.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
-    const relatoresUnicos = new Set(itens.map((x) => normalizeName(x.relator?.nomeOriginal || "")).filter(Boolean)).size;
+    const autoresValidos = itens.filter((x) => x.autorTipo === "deputado_unico" && x.autor?.id);
+    const autoresUnicos = new Set(autoresValidos.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
+    const relatoresValidos = itens.filter((x) => x.relator?.id);
+    const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.relator?.nomeOriginal || "")).filter(Boolean)).size;
 
     return json(200, {
       totalItens: itens.length,
       autoresUnicos,
       relatoresUnicos,
-      autoresPorPartido: countByKey(itens.map((x) => x.autor?.partido)),
-      relatoresPorPartido: countByKey(itens.map((x) => x.relator?.partido)),
+      autoresPorPartido: countByKey(autoresValidos.map((x) => x.autor?.partido)),
+      relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.relator?.partido)),
       itens,
     });
   } catch (error) {

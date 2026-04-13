@@ -46,12 +46,16 @@ function renderItems(items) {
     return;
   }
   for (const item of items) {
+    const autorPartidoUf =
+      item.autorTipo === "senado"
+        ? "Desconsiderado (Senado)"
+        : `${item.autor?.partido || "-"} / ${item.autor?.uf || "-"}`;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${item.item || "-"}</td>
       <td>${item.projeto || "-"}</td>
       <td>${item.autor?.nomeOriginal || "-"}</td>
-      <td>${item.autor?.partido || "-"} / ${item.autor?.uf || "-"}</td>
+      <td>${autorPartidoUf}</td>
       <td>${item.relator?.nomeOriginal || "-"}</td>
       <td>${item.relator?.partido || "-"} / ${item.relator?.uf || "-"}</td>
     `;
