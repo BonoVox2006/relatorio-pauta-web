@@ -249,8 +249,13 @@ exports.handler = async (event) => {
 
     const itens = [];
     const autoresPartidosPorItem = new Map();
+    const relatoresPorItem = new Map();
     for (const item of parsedItems) {
       const relator = item.tipoItem === "requerimento" ? { nomeOriginal: "-", partido: "-", uf: "-", id: null } : await enrich(item.relatorNome);
+      const itemKey = `${item.item}|${item.projeto}`;
+      if (relator?.id && relator.partido && relator.partido !== "-") {
+        relatoresPorItem.set(itemKey, relator);
+      }
 
       if (item.autorTipo === "senado") {
         itens.push({
@@ -289,17 +294,16 @@ exports.handler = async (event) => {
         };
         itens.push(row);
         if (autor?.id && autor.partido && autor.partido !== "-") {
-          const key = `${item.item}|${item.projeto}`;
-          if (!autoresPartidosPorItem.has(key)) autoresPartidosPorItem.set(key, new Set());
-          autoresPartidosPorItem.get(key).add(autor.partido);
+          if (!autoresPartidosPorItem.has(itemKey)) autoresPartidosPorItem.set(itemKey, new Set());
+          autoresPartidosPorItem.get(itemKey).add(autor.partido);
         }
       }
     }
 
     const autoresValidos = itens.filter((x) => x.autorTipo === "deputado_unico" && x.autor?.id);
     const autoresUnicos = new Set(autoresValidos.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
-    const relatoresValidos = itens.filter((x) => x.relator?.id);
-    const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.relator?.nomeOriginal || "")).filter(Boolean)).size;
+    const relatoresValidos = [...relatoresPorItem.values()];
+    const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.nomeOriginal || "")).filter(Boolean)).size;
     const partidosAutoresContabilizados = [];
     for (const setPartidos of autoresPartidosPorItem.values()) {
       for (const p of setPartidos.values()) partidosAutoresContabilizados.push(p);
@@ -311,7 +315,7 @@ exports.handler = async (event) => {
       autoresUnicos,
       relatoresUnicos,
       autoresPorPartido: countByKey(partidosAutoresContabilizados),
-      relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.relator?.partido)),
+      relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.partido)),
       itens,
     });
   } catch (error) {
