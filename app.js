@@ -92,7 +92,13 @@ uploadForm.addEventListener("submit", async (event) => {
 
   try {
     const response = await fetch("/.netlify/functions/report", { method: "POST", body: formData });
-    const payload = await response.json();
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new Error(`Servidor retornou resposta invalida (HTTP ${response.status}).`);
+    }
     if (!response.ok) throw new Error(payload.error || "Falha ao gerar relatorio.");
     renderReport(payload);
     setStatus("Relatorio gerado com sucesso.");

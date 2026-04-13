@@ -84,32 +84,55 @@ async function extractTextFromUpload(file) {
   return buffer.toString("utf-8");
 }
 
-async function fetchDeputadoByName(name) {
-  if (!name) return null;
-  const encoded = encodeURIComponent(name);
-  const response = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encoded}&itens=20`, {
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) return null;
-  const json = await response.json();
-  const rows = Array.isArray(json?.dados) ? json.dados : [];
-  if (!rows.length) return null;
-  const wanted = normalizeName(name);
-  let selected = rows[0];
-  for (const row of rows) {
-    const candidate = normalizeName(row.nome || "");
-    if (candidate === wanted) {
-      selected = row;
-      break;
-    }
-    if (candidate.includes(wanted) || wanted.includes(candidate)) selected = row;
+async function fetchAllDeputados() {
+  const all = [];
+  for (let pagina = 1; pagina <= 8; pagina++) {
+    const response = await fetch(
+      `https://dadosabertos.camara.leg.br/api/v2/deputados?itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`,
+      { headers: { accept: "application/json" } }
+    );
+    if (!response.ok) break;
+    const json = await response.json();
+    const rows = Array.isArray(json?.dados) ? json.dados : [];
+    if (!rows.length) break;
+    all.push(...rows);
+    if (rows.length < 100) break;
   }
+  return all;
+}
+
+function findDeputadoByName(name, deputados) {
+  if (!name) return null;
+  const wanted = normalizeName(name);
+  if (!wanted) return null;
+
+  let best = null;
+  let bestScore = -1;
+  for (const dep of deputados) {
+    const candidate = normalizeName(dep.nome || "");
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate === wanted) score = 100;
+    else if (candidate.startsWith(wanted) || wanted.startsWith(candidate)) score = 80;
+    else if (candidate.includes(wanted) || wanted.includes(candidate)) score = 60;
+    else {
+      const tokens = wanted.split(" ").filter((x) => x.length > 2);
+      const hit = tokens.filter((t) => candidate.includes(t)).length;
+      score = hit * 10;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = dep;
+    }
+  }
+
+  if (!best || bestScore < 20) return null;
   return {
     nomeOriginal: name,
-    nomeApi: selected.nome || name,
-    partido: selected.siglaPartido || "N/I",
-    uf: selected.siglaUf || "N/I",
-    id: selected.id || null,
+    nomeApi: best.nome || name,
+    partido: best.siglaPartido || "-",
+    uf: best.siglaUf || "-",
+    id: best.id || null,
   };
 }
 
@@ -143,11 +166,12 @@ exports.handler = async (event) => {
     const parsedItems = parseAgendaItems(text);
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
+    const deputados = await fetchAllDeputados();
     const cache = new Map();
-    async function enrich(name) {
+    function enrich(name) {
       if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
       const key = normalizeName(name);
-      if (!cache.has(key)) cache.set(key, await fetchDeputadoByName(name));
+      if (!cache.has(key)) cache.set(key, findDeputadoByName(name, deputados));
       return cache.get(key) || { nomeOriginal: name, partido: "-", uf: "-", id: null };
     }
 
@@ -155,11 +179,11 @@ exports.handler = async (event) => {
     for (const item of parsedItems) {
       let autor = { nomeOriginal: item.autorNome || item.autorBruto || "", partido: "-", uf: "-", id: null };
       if (item.autorTipo === "deputado_unico" && item.autorNome) {
-        autor = await enrich(item.autorNome);
+        autor = enrich(item.autorNome);
       } else if (item.autorTipo === "senado") {
         autor = { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null };
       }
-      const relator = await enrich(item.relatorNome);
+      const relator = enrich(item.relatorNome);
       itens.push({ item: item.item, projeto: item.projeto, autor, relator, autorTipo: item.autorTipo });
     }
 
