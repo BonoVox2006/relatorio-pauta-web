@@ -80,18 +80,35 @@ function shouldIgnoreItem(body, projeto, autorRaw) {
   const autorNorm = normalizeName(autorRaw);
 
   // 1) Desconsiderar todos os requerimentos.
-  if (/^REQUERIMENTO\b/i.test(body)) return true;
+  if (
+    /^REQUERIMENTO\b/i.test(body) ||
+    /^REQ\b/i.test(body) ||
+    projNorm.startsWith("REQUERIMENTO") ||
+    projNorm.startsWith("REQ ")
+  )
+    return true;
 
   // 2) Desconsiderar redações finais.
-  if (projNorm.includes("REDACAO FINAL") || bodyNorm.includes("REDACAO FINAL")) return true;
+  if (
+    projNorm.includes("REDACAO FINAL") ||
+    bodyNorm.includes("REDACAO FINAL") ||
+    bodyNorm.includes("PARECER A REDACAO FINAL") ||
+    bodyNorm.includes("PARA REDACAO FINAL")
+  )
+    return true;
 
   // 3) Desconsiderar PDL de autoria da Comissão de Comunicação.
-  const isPDL = /PROJETO DE DECRETO LEGISLATIVO/.test(projNorm) || /^PDL\b/.test(projNorm);
+  const isPDL =
+    /PROJETO DE DECRETO LEGISLATIVO/.test(projNorm) ||
+    /^PDL\b/.test(projNorm) ||
+    /\bPDL\s*\d+/.test(projNorm);
   const autoriaComComunicacao =
     autorNorm.includes("COMISSAO DE COMUNICACAO") ||
     autorNorm.includes("COMISSAO COMUNICACAO") ||
+    autorNorm.includes("CCOM") ||
     bodyNorm.includes(" DA COMISSAO DE COMUNICACAO ") ||
-    bodyNorm.includes(" DA COMISSAO COMUNICACAO ");
+    bodyNorm.includes(" DA COMISSAO COMUNICACAO ") ||
+    bodyNorm.includes(" COMISSAO DE COMUNICACAO ");
   if (isPDL && autoriaComComunicacao) return true;
 
   // 4) Desconsiderar PDL sobre acordos internacionais.
@@ -100,7 +117,11 @@ function shouldIgnoreItem(body, projeto, autorRaw) {
     bodyNorm.includes("ACORDOS INTERNACIONAIS") ||
     bodyNorm.includes("TRATADO INTERNACIONAL") ||
     bodyNorm.includes("TRATADOS INTERNACIONAIS") ||
-    bodyNorm.includes("CONVENCAO INTERNACIONAL");
+    bodyNorm.includes("CONVENCAO INTERNACIONAL") ||
+    bodyNorm.includes("PROTOCOLO INTERNACIONAL") ||
+    bodyNorm.includes("MEMORANDO DE ENTENDIMENTO") ||
+    bodyNorm.includes("ACORDO ENTRE") ||
+    bodyNorm.includes("ACORDO DE COOPERACAO");
   if (isPDL && trataAcordoInternacional) return true;
 
   return false;
