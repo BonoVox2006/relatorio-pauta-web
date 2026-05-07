@@ -74,7 +74,7 @@ function splitAutores(rawAutor) {
   return [...new Set(partes)];
 }
 
-function shouldIgnoreItem(body, projeto, autorRaw) {
+function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
   const bodyNorm = normalizeName(body);
   const projNorm = normalizeName(projeto);
   const autorNorm = normalizeName(autorRaw);
@@ -90,6 +90,7 @@ function shouldIgnoreItem(body, projeto, autorRaw) {
 
   // 2) Desconsiderar redações finais.
   if (
+    inRedacaoFinalSection ||
     projNorm.includes("REDACAO FINAL") ||
     bodyNorm.includes("REDACAO FINAL") ||
     bodyNorm.includes("PARECER A REDACAO FINAL") ||
@@ -130,8 +131,12 @@ function shouldIgnoreItem(body, projeto, autorRaw) {
 function parseAgendaItems(text) {
   const blocks = [];
   const regex = /(^|\n)\s*(\d+)\s*-\s*([\s\S]*?)(?=\n\s*\d+\s*-\s*|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
+  const secaoAIdx = text.search(/A\s*-\s*Reda[cç][oõ]es\s+Finais/i);
+  const secaoBIdx = text.search(/B\s*-\s*Proposi[cç][oõ]es/i);
   let match;
   while ((match = regex.exec(text)) !== null) {
+    const itemStartIdx = match.index;
+    const inRedacaoFinalSection = secaoAIdx >= 0 && secaoBIdx > secaoAIdx && itemStartIdx > secaoAIdx && itemStartIdx < secaoBIdx;
     const item = match[2];
     const body = match[3].replace(/\s+/g, " ").trim();
     if (!/^(PROJETO|REQUERIMENTO)\b/i.test(body)) continue;
@@ -142,7 +147,7 @@ function parseAgendaItems(text) {
       body.match(/-\s+d[oa]s?\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
       "";
     let relatorRaw = body.match(/RELATOR(?:A)?:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
-    if (shouldIgnoreItem(body, projeto, autorRaw)) continue;
+    if (shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection)) continue;
     const autorClass = classifyAutor(autorRaw);
     const autoresNomes = splitAutores(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
