@@ -13,27 +13,128 @@ function normalizeName(name) {
 }
 
 function cleanPersonName(raw) {
-  return String(raw || "")
+  const semTitulo = String(raw || "")
     .replace(/^DEPUTAD[OA]\s+/i, "")
-    .replace(/^DEP\.?\s+/i, "")
-    .replace(/\s*\(.*?\)\s*/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/^DEP(?:UTAD[OA])?\.?\s+/i, "")
+    .replace(/^DEPª\.?\s+/i, "")
+    .replace(/^SR\.?\s+/i, "")
+    .replace(/^SRA\.?\s+/i, "")
+    .replace(/\s*\(.*?\)\s*/g, " ");
+
+  const semRuido = semTitulo
+    .replace(/\bhttps?:\/\/\S+/gi, " ")
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+    .replace(/\bPauta\b[\s\S]*$/i, " ")
+    .replace(/[^A-Za-zÀ-ÿ\s-]/g, " ");
+
+  return semRuido.replace(/\s+/g, " ").trim();
+}
+
+function classifyAutor(rawAutor) {
+  const bruto = String(rawAutor || "").trim();
+  if (!bruto) return { tipo: "desconhecido", nome: "" };
+
+  const n = normalizeName(bruto);
+  if (/\bSENADO\b/.test(n)) return { tipo: "senado", nome: "" };
+
+  const temIndicadorDeputado = /\b(DEPUTAD|DEP\.|DEP |SR|SRA)\b/i.test(bruto);
+  if (!temIndicadorDeputado || /\b(COMISSAO|MESA)\b/i.test(bruto)) {
+    return { tipo: "nao_deputado_unico", nome: "" };
+  }
+
+  const somentePrimeiroAutor = bruto.replace(/\s+e\s+outr[oa]s?.*$/i, "");
+  return { tipo: "deputado_unico", nome: cleanPersonName(somentePrimeiroAutor) };
+}
+
+function splitAutores(rawAutor) {
+  const bruto = String(rawAutor || "").trim();
+  if (!bruto) return [];
+  const normalized = normalizeName(bruto);
+  if (/\bSENADO\b/.test(normalized)) return [];
+  if (/\b(COMISSAO|MESA)\b/.test(normalized)) return [];
+
+  let semRotulo = bruto
+    .replace(/\bdos\s+Srs?\.?\b/gi, "")
+    .replace(/\bdas\s+Sras?\.?\b/gi, "")
+    .replace(/\bdo\s+Sr\.?\b/gi, "")
+    .replace(/\bda\s+Sra\.?\b/gi, "")
+    .replace(/\bdo\s+Deputado\b/gi, "")
+    .replace(/\bda\s+Deputada\b/gi, "")
+    .replace(/\bdeputad[oa]s?\b/gi, "")
+    .replace(/\bdep(?:utad[oa])?\.?\b/gi, "")
+    .replace(/\s+e\s+outros?.*$/i, "")
     .trim();
+
+  semRotulo = semRotulo.replace(/\s*\/\s*[A-Z]{2}\b/g, " ");
+  const partes = semRotulo
+    .split(/\s+e\s+|,\s*/i)
+    .map((p) => cleanPersonName(p))
+    .filter((p) => p.length >= 3);
+  return [...new Set(partes)];
+}
+
+function shouldIgnoreItem(body, projeto, autorRaw) {
+  const bodyNorm = normalizeName(body);
+  const projNorm = normalizeName(projeto);
+  const autorNorm = normalizeName(autorRaw);
+
+  // 1) Desconsiderar todos os requerimentos.
+  if (/^REQUERIMENTO\b/i.test(body)) return true;
+
+  // 2) Desconsiderar redações finais.
+  if (projNorm.includes("REDACAO FINAL") || bodyNorm.includes("REDACAO FINAL")) return true;
+
+  // 3) Desconsiderar PDL de autoria da Comissão de Comunicação.
+  const isPDL = /PROJETO DE DECRETO LEGISLATIVO/.test(projNorm) || /^PDL\b/.test(projNorm);
+  const autoriaComComunicacao =
+    autorNorm.includes("COMISSAO DE COMUNICACAO") ||
+    autorNorm.includes("COMISSAO COMUNICACAO") ||
+    bodyNorm.includes(" DA COMISSAO DE COMUNICACAO ") ||
+    bodyNorm.includes(" DA COMISSAO COMUNICACAO ");
+  if (isPDL && autoriaComComunicacao) return true;
+
+  // 4) Desconsiderar PDL sobre acordos internacionais.
+  const trataAcordoInternacional =
+    bodyNorm.includes("ACORDO INTERNACIONAL") ||
+    bodyNorm.includes("ACORDOS INTERNACIONAIS") ||
+    bodyNorm.includes("TRATADO INTERNACIONAL") ||
+    bodyNorm.includes("TRATADOS INTERNACIONAIS") ||
+    bodyNorm.includes("CONVENCAO INTERNACIONAL");
+  if (isPDL && trataAcordoInternacional) return true;
+
+  return false;
 }
 
 function parseAgendaItems(text) {
   const blocks = [];
-  const regex = /(^|\n)\s*(\d+)\s*-\s*(PROJETO[\s\S]*?)(?=\n\s*\d+\s*-\s*PROJETO|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
+  const regex = /(^|\n)\s*(\d+)\s*-\s*([\s\S]*?)(?=\n\s*\d+\s*-\s*|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
   let match;
   while ((match = regex.exec(text)) !== null) {
     const item = match[2];
     const body = match[3].replace(/\s+/g, " ").trim();
-    const projeto = body.match(/(PROJETO\s+DE\s+[A-Z]+[\s\S]*?)(?=\s+RELATOR:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
-    let autorRaw = body.match(/-\s+do\s+(.+?)\s+-\s+que/i)?.[1] || body.match(/-\s+do\s+(.+?)\s+RELATOR:/i)?.[1] || "";
-    let relatorRaw = body.match(/RELATOR:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
-    autorRaw = cleanPersonName(autorRaw);
+    if (!/^(PROJETO|REQUERIMENTO)\b/i.test(body)) continue;
+    const projeto =
+      body.match(/((?:PROJETO|REQUERIMENTO)[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
+    let autorRaw =
+      body.match(/-\s+d[oa]s?\s+(.+?)\s+-\s+que/i)?.[1] ||
+      body.match(/-\s+d[oa]s?\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
+      "";
+    let relatorRaw = body.match(/RELATOR(?:A)?:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
+    if (shouldIgnoreItem(body, projeto, autorRaw)) continue;
+    const autorClass = classifyAutor(autorRaw);
+    const autoresNomes = splitAutores(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
-    blocks.push({ item, projeto, autorNome: autorRaw, relatorNome: relatorRaw });
+    blocks.push({
+      item,
+      projeto,
+      autorBruto: autorRaw,
+      autorTipo: autorClass.tipo,
+      autorNome: autorClass.nome,
+      autoresNomes,
+      relatorNome: relatorRaw,
+      tipoItem: /^REQUERIMENTO\b/i.test(body) ? "requerimento" : "projeto",
+    });
   }
   return blocks;
 }
@@ -52,32 +153,137 @@ async function extractTextFromUpload(file) {
   return buffer.toString("utf-8");
 }
 
-async function fetchDeputadoByName(name) {
+async function fetchDeputadosByLegislatura(idLegislatura) {
+  const maxPaginas = 10;
+  const urls = Array.from({ length: maxPaginas }, (_, i) => {
+    const pagina = i + 1;
+    return `https://dadosabertos.camara.leg.br/api/v2/deputados?idLegislatura=${idLegislatura}&itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`;
+  });
+  const responses = await Promise.all(
+    urls.map((url) =>
+      fetch(url, { headers: { accept: "application/json" } }).then((r) => (r.ok ? r.json() : { dados: [] }))
+    )
+  );
+  const all = [];
+  for (const json of responses) {
+    const rows = Array.isArray(json?.dados) ? json.dados : [];
+    all.push(...rows);
+  }
+  return all;
+}
+
+async function fetchAllDeputados() {
+  const [leg57, leg56] = await Promise.all([fetchDeputadosByLegislatura(57), fetchDeputadosByLegislatura(56)]);
+  const candidatos = [...leg57, ...leg56];
+  const porId = new Map();
+  for (const dep of candidatos) {
+    if (!dep?.id) continue;
+    if (!porId.has(dep.id)) porId.set(dep.id, dep);
+  }
+  return [...porId.values()];
+}
+
+/** Coleta nomes únicos que precisam de match (relatores + autores por item). */
+function coletarNomesParaEnriquecer(parsedItems) {
+  const porChave = new Map();
+  function add(nome) {
+    const n = String(nome || "").trim();
+    if (!n || n === "-") return;
+    const key = normalizeName(n);
+    if (!key) return;
+    if (!porChave.has(key)) porChave.set(key, n);
+  }
+  for (const item of parsedItems) {
+    if (item.tipoItem !== "requerimento") add(item.relatorNome);
+    if (item.autorTipo === "senado") continue;
+    const candidatos = item.autoresNomes.length ? item.autoresNomes : item.autorNome ? [item.autorNome] : [];
+    for (const nome of candidatos) add(nome);
+  }
+  return porChave;
+}
+
+/** Pré-carrega cache local + API em paralelo (evita dezenas de awaits sequenciais). */
+async function buildEnrichCache(deputados, porChaveNome) {
+  const cache = new Map();
+  const precisaApi = [];
+  for (const [key, nomeOriginal] of porChaveNome.entries()) {
+    const local = findDeputadoByName(nomeOriginal, deputados);
+    if (local) cache.set(key, local);
+    else precisaApi.push(nomeOriginal);
+  }
+  const lote = 8;
+  for (let i = 0; i < precisaApi.length; i += lote) {
+    const fatia = precisaApi.slice(i, i + lote);
+    const resultados = await Promise.all(fatia.map((n) => fetchDeputadoByQuery(n)));
+    for (let j = 0; j < fatia.length; j++) {
+      const nome = fatia[j];
+      const found = resultados[j];
+      const key = normalizeName(nome);
+      if (found) cache.set(key, found);
+      else cache.set(key, null);
+    }
+  }
+  return cache;
+}
+
+function lookupEnrich(cache, name) {
+  if (!name) return { nomeOriginal: "", partido: "-", uf: "-", id: null };
+  const key = normalizeName(name);
+  const found = cache.get(key);
+  return found || { nomeOriginal: name, partido: "-", uf: "-", id: null };
+}
+
+function findDeputadoByName(name, deputados) {
   if (!name) return null;
+  const wanted = normalizeName(name);
+  if (!wanted) return null;
+
+  let best = null;
+  let bestScore = -1;
+  for (const dep of deputados) {
+    const candidate = normalizeName(dep.nome || "");
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate === wanted) score = 100;
+    else if (candidate.startsWith(wanted) || wanted.startsWith(candidate)) score = 80;
+    else if (candidate.includes(wanted) || wanted.includes(candidate)) score = 60;
+    else {
+      const tokens = wanted.split(" ").filter((x) => x.length > 2);
+      const hit = tokens.filter((t) => candidate.includes(t)).length;
+      score = hit * 10;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = dep;
+    }
+  }
+
+  if (!best || bestScore < 10) return null;
+  return {
+    nomeOriginal: name,
+    nomeApi: best.nome || name,
+    partido: best.siglaPartido || "-",
+    uf: best.siglaUf || "-",
+    id: best.id || null,
+  };
+}
+
+async function fetchDeputadoByQuery(name) {
   const encoded = encodeURIComponent(name);
-  const response = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encoded}&itens=20`, {
+  const response = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encoded}&itens=10`, {
     headers: { accept: "application/json" },
   });
   if (!response.ok) return null;
   const json = await response.json();
   const rows = Array.isArray(json?.dados) ? json.dados : [];
   if (!rows.length) return null;
-  const wanted = normalizeName(name);
-  let selected = rows[0];
-  for (const row of rows) {
-    const candidate = normalizeName(row.nome || "");
-    if (candidate === wanted) {
-      selected = row;
-      break;
-    }
-    if (candidate.includes(wanted) || wanted.includes(candidate)) selected = row;
-  }
+  const dep = rows[0];
   return {
     nomeOriginal: name,
-    nomeApi: selected.nome || name,
-    partido: selected.siglaPartido || "N/I",
-    uf: selected.siglaUf || "N/I",
-    id: selected.id || null,
+    nomeApi: dep.nome || name,
+    partido: dep.siglaPartido || "-",
+    uf: dep.siglaUf || "-",
+    id: dep.id || null,
   };
 }
 
@@ -111,30 +317,82 @@ exports.handler = async (event) => {
     const parsedItems = parseAgendaItems(text);
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
-    const cache = new Map();
-    async function enrich(name) {
-      if (!name) return { nomeOriginal: "", partido: "N/I", uf: "N/I", id: null };
-      const key = normalizeName(name);
-      if (!cache.has(key)) cache.set(key, await fetchDeputadoByName(name));
-      return cache.get(key) || { nomeOriginal: name, partido: "N/I", uf: "N/I", id: null };
-    }
+    const deputados = await fetchAllDeputados();
+    const nomesParaEnriquecer = coletarNomesParaEnriquecer(parsedItems);
+    const enrichCache = await buildEnrichCache(deputados, nomesParaEnriquecer);
 
     const itens = [];
+    const autoresPartidosPorItem = new Map();
+    const relatoresPorItem = new Map();
     for (const item of parsedItems) {
-      const autor = await enrich(item.autorNome);
-      const relator = await enrich(item.relatorNome);
-      itens.push({ item: item.item, projeto: item.projeto, autor, relator });
+      const relator =
+        item.tipoItem === "requerimento"
+          ? { nomeOriginal: "-", partido: "-", uf: "-", id: null }
+          : lookupEnrich(enrichCache, item.relatorNome);
+      const itemKey = `${item.item}|${item.projeto}`;
+      if (relator?.id && relator.partido && relator.partido !== "-") {
+        relatoresPorItem.set(itemKey, relator);
+      }
+
+      if (item.autorTipo === "senado") {
+        itens.push({
+          item: item.item,
+          projeto: item.projeto,
+          autor: { nomeOriginal: "Autoria do Senado", partido: "-", uf: "-", id: null },
+          relator,
+          autorTipo: item.autorTipo,
+          tipoItem: item.tipoItem,
+        });
+        continue;
+      }
+
+      const autoresCandidatos = item.autoresNomes.length ? item.autoresNomes : item.autorNome ? [item.autorNome] : [];
+      if (!autoresCandidatos.length) {
+        itens.push({
+          item: item.item,
+          projeto: item.projeto,
+          autor: { nomeOriginal: item.autorBruto || "-", partido: "-", uf: "-", id: null },
+          relator,
+          autorTipo: "nao_deputado_unico",
+          tipoItem: item.tipoItem,
+        });
+        continue;
+      }
+
+      for (const nomeAutor of autoresCandidatos) {
+        const autor = lookupEnrich(enrichCache, nomeAutor);
+        const row = {
+          item: item.item,
+          projeto: item.projeto,
+          autor,
+          relator,
+          autorTipo: autor?.id ? "deputado_unico" : "nao_deputado_unico",
+          tipoItem: item.tipoItem,
+        };
+        itens.push(row);
+        if (autor?.id && autor.partido && autor.partido !== "-") {
+          if (!autoresPartidosPorItem.has(itemKey)) autoresPartidosPorItem.set(itemKey, new Set());
+          autoresPartidosPorItem.get(itemKey).add(autor.partido);
+        }
+      }
     }
 
-    const autoresUnicos = new Set(itens.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
-    const relatoresUnicos = new Set(itens.map((x) => normalizeName(x.relator?.nomeOriginal || "")).filter(Boolean)).size;
+    const autoresValidos = itens.filter((x) => x.autorTipo === "deputado_unico" && x.autor?.id);
+    const autoresUnicos = new Set(autoresValidos.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
+    const relatoresValidos = [...relatoresPorItem.values()];
+    const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.nomeOriginal || "")).filter(Boolean)).size;
+    const partidosAutoresContabilizados = [];
+    for (const setPartidos of autoresPartidosPorItem.values()) {
+      for (const p of setPartidos.values()) partidosAutoresContabilizados.push(p);
+    }
 
     return json(200, {
-      totalItens: itens.length,
+      totalItens: parsedItems.length,
+      totalLinhasDetalhe: itens.length,
       autoresUnicos,
       relatoresUnicos,
-      autoresPorPartido: countByKey(itens.map((x) => x.autor?.partido)),
-      relatoresPorPartido: countByKey(itens.map((x) => x.relator?.partido)),
+      autoresPorPartido: countByKey(partidosAutoresContabilizados),
+      relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.partido)),
       itens,
     });
   } catch (error) {
