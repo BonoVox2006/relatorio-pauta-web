@@ -74,7 +74,7 @@ function splitAutores(rawAutor) {
   return [...new Set(partes)];
 }
 
-function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
+function getIgnoreReason(body, projeto, autorRaw, inRedacaoFinalSection) {
   const bodyNorm = normalizeName(body);
   const projNorm = normalizeName(projeto);
   const autorNorm = normalizeName(autorRaw);
@@ -86,7 +86,7 @@ function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
     projNorm.startsWith("REQUERIMENTO") ||
     projNorm.startsWith("REQ ")
   )
-    return true;
+    return "requerimento";
 
   // 2) Desconsiderar redações finais.
   if (
@@ -96,7 +96,7 @@ function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
     bodyNorm.includes("PARECER A REDACAO FINAL") ||
     bodyNorm.includes("PARA REDACAO FINAL")
   )
-    return true;
+    return "redacao_final";
 
   // 3) Desconsiderar PDL de autoria da Comissão de Comunicação.
   const isPDL =
@@ -110,7 +110,7 @@ function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
     bodyNorm.includes(" DA COMISSAO DE COMUNICACAO ") ||
     bodyNorm.includes(" DA COMISSAO COMUNICACAO ") ||
     bodyNorm.includes(" COMISSAO DE COMUNICACAO ");
-  if (isPDL && autoriaComComunicacao) return true;
+  if (isPDL && autoriaComComunicacao) return "pdl_comissao_comunicacao";
 
   // 4) Desconsiderar PDL sobre acordos internacionais.
   const trataAcordoInternacional =
@@ -123,13 +123,19 @@ function shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection) {
     bodyNorm.includes("MEMORANDO DE ENTENDIMENTO") ||
     bodyNorm.includes("ACORDO ENTRE") ||
     bodyNorm.includes("ACORDO DE COOPERACAO");
-  if (isPDL && trataAcordoInternacional) return true;
+  if (isPDL && trataAcordoInternacional) return "pdl_acordo_internacional";
 
-  return false;
+  return null;
 }
 
 function parseAgendaItems(text) {
   const blocks = [];
+  const ignored = {
+    requerimento: 0,
+    redacao_final: 0,
+    pdl_comissao_comunicacao: 0,
+    pdl_acordo_internacional: 0,
+  };
   const regex = /(^|\n)\s*(\d+)\s*-\s*([\s\S]*?)(?=\n\s*\d+\s*-\s*|\n\s*[A-Z]\s*-\s*Proposi|$)/gi;
   const secaoAIdx = text.search(/A\s*-\s*Reda[cç][oõ]es\s+Finais/i);
   const secaoBIdx = text.search(/B\s*-\s*Proposi[cç][oõ]es/i);
@@ -147,7 +153,11 @@ function parseAgendaItems(text) {
       body.match(/-\s+d[oa]s?\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
       "";
     let relatorRaw = body.match(/RELATOR(?:A)?:\s*(.+?)(?=\s+PARECER:|$)/i)?.[1] || "";
-    if (shouldIgnoreItem(body, projeto, autorRaw, inRedacaoFinalSection)) continue;
+    const ignoreReason = getIgnoreReason(body, projeto, autorRaw, inRedacaoFinalSection);
+    if (ignoreReason) {
+      ignored[ignoreReason] = (ignored[ignoreReason] || 0) + 1;
+      continue;
+    }
     const autorClass = classifyAutor(autorRaw);
     const autoresNomes = splitAutores(autorRaw);
     relatorRaw = cleanPersonName(relatorRaw);
@@ -162,7 +172,7 @@ function parseAgendaItems(text) {
       tipoItem: /^REQUERIMENTO\b/i.test(body) ? "requerimento" : "projeto",
     });
   }
-  return blocks;
+  return { blocks, ignored };
 }
 
 async function extractTextFromUpload(file) {
@@ -340,7 +350,8 @@ exports.handler = async (event) => {
     const text = await extractTextFromUpload(file);
     if (!text.trim()) return json(422, { error: "Nao foi possivel extrair texto do arquivo." });
 
-    const parsedItems = parseAgendaItems(text);
+    const parsed = parseAgendaItems(text);
+    const parsedItems = parsed.blocks;
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
     const deputados = await fetchAllDeputados();
@@ -413,12 +424,14 @@ exports.handler = async (event) => {
     }
 
     return json(200, {
+      versaoRegra: "filtro-v4-ccjc",
       totalItens: parsedItems.length,
       totalLinhasDetalhe: itens.length,
       autoresUnicos,
       relatoresUnicos,
       autoresPorPartido: countByKey(partidosAutoresContabilizados),
       relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.partido)),
+      filtrosAplicados: parsed.ignored,
       itens,
     });
   } catch (error) {
