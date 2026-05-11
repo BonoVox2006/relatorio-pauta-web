@@ -9,7 +9,6 @@ const itemsCard = document.getElementById("itemsCard");
 const metricItens = document.getElementById("metricItens");
 const metricAutores = document.getElementById("metricAutores");
 const metricRelatores = document.getElementById("metricRelatores");
-const metricNote = document.getElementById("metricNote");
 
 const autorPartidoBody = document.getElementById("autorPartidoBody");
 const relatorPartidoBody = document.getElementById("relatorPartidoBody");
@@ -82,18 +81,6 @@ function renderReport(data) {
   metricItens.textContent = String(data.totalItens || 0);
   metricAutores.textContent = String(data.autoresUnicos || 0);
   metricRelatores.textContent = String(data.relatoresUnicos || 0);
-  const sumAut =
-    typeof data.somaQtdAutoresPorPartido === "number"
-      ? data.somaQtdAutoresPorPartido
-      : (data.autoresPorPartido || []).reduce((a, r) => a + (r.count || 0), 0);
-  const sumRel =
-    typeof data.somaQtdRelatoresPorPartido === "number"
-      ? data.somaQtdRelatoresPorPartido
-      : (data.relatoresPorPartido || []).reduce((a, r) => a + (r.count || 0), 0);
-  if (metricNote) {
-    metricNote.textContent = `Soma das Qtd. na tabela “Autores por partido”: ${sumAut}. Soma na tabela “Relatores por partido”: ${sumRel}. Os números em destaque são deputados distintos encontrados na API (quem não casa fica “- / -” no detalhe).`;
-    metricNote.classList.remove("hidden");
-  }
   fillCountTable(autorPartidoBody, data.autoresPorPartido || []);
   fillCountTable(relatorPartidoBody, data.relatoresPorPartido || []);
   renderItems(data.itens || []);

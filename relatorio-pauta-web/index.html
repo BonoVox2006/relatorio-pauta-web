@@ -35,16 +35,14 @@
         <h2>Resumo</h2>
         <div class="metrics">
           <div class="metric"><span>Itens na pauta</span><strong id="metricItens">0</strong></div>
-          <div class="metric"><span>Autores distintos (API)</span><strong id="metricAutores">0</strong></div>
-          <div class="metric"><span>Relatores distintos (API)</span><strong id="metricRelatores">0</strong></div>
+          <div class="metric"><span>Autores distintos</span><strong id="metricAutores">0</strong></div>
+          <div class="metric"><span>Relatores distintos</span><strong id="metricRelatores">0</strong></div>
         </div>
-        <p class="metric-note hidden" id="metricNote"></p>
       </section>
 
       <section class="grid hidden" id="tablesGrid">
         <article class="card">
           <h3>Autores por partido</h3>
-          <p class="table-hint">Quantidade por partido nos itens (a soma das linhas não é o número de deputados distintos).</p>
           <table>
             <thead><tr><th>Partido</th><th>Qtd.</th></tr></thead>
             <tbody id="autorPartidoBody"></tbody>
@@ -52,7 +50,6 @@
         </article>
         <article class="card">
           <h3>Relatores por partido</h3>
-          <p class="table-hint">Uma contagem por item com relator casado na API (a soma costuma coincidir com itens com relator identificado).</p>
           <table>
             <thead><tr><th>Partido</th><th>Qtd.</th></tr></thead>
             <tbody id="relatorPartidoBody"></tbody>

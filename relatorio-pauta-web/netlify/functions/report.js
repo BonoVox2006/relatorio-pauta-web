@@ -226,8 +226,12 @@ async function fetchDeputadosByLegislatura(idLegislatura) {
 }
 
 async function fetchAllDeputados() {
-  const [leg57, leg56] = await Promise.all([fetchDeputadosByLegislatura(57), fetchDeputadosByLegislatura(56)]);
-  const candidatos = [...leg57, ...leg56];
+  const [leg57, leg56, leg55] = await Promise.all([
+    fetchDeputadosByLegislatura(57),
+    fetchDeputadosByLegislatura(56),
+    fetchDeputadosByLegislatura(55),
+  ]);
+  const candidatos = [...leg57, ...leg56, ...leg55];
   const porId = new Map();
   for (const dep of candidatos) {
     if (!dep?.id) continue;
@@ -311,7 +315,7 @@ function findDeputadoByName(name, deputados) {
     }
   }
 
-  if (!best || bestScore < 10) return null;
+  if (!best || bestScore < 8) return null;
   return {
     nomeOriginal: name,
     nomeApi: best.nome || name,
@@ -322,21 +326,38 @@ function findDeputadoByName(name, deputados) {
 }
 
 async function fetchDeputadoByQuery(name) {
-  const encoded = encodeURIComponent(name);
-  const response = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encoded}&itens=10`, {
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) return null;
-  const json = await response.json();
-  const rows = Array.isArray(json?.dados) ? json.dados : [];
-  if (!rows.length) return null;
-  const dep = rows[0];
+  const n = String(name || "").trim();
+  if (!n) return null;
+
+  async function buscar(term) {
+    const response = await fetch(
+      `https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(term)}&itens=20`,
+      { headers: { accept: "application/json" } }
+    );
+    if (!response.ok) return [];
+    const json = await response.json();
+    return Array.isArray(json?.dados) ? json.dados : [];
+  }
+
+  let rows = await buscar(n);
+  let found = findDeputadoByName(n, rows);
+  if (!found?.id) {
+    const parts = n.split(/\s+/).filter((p) => p.length >= 2);
+    if (parts.length >= 2) {
+      const sobrenome = parts[parts.length - 1];
+      if (sobrenome.length >= 4) {
+        rows = await buscar(sobrenome);
+        found = findDeputadoByName(n, rows);
+      }
+    }
+  }
+  if (!found?.id) return null;
   return {
-    nomeOriginal: name,
-    nomeApi: dep.nome || name,
-    partido: dep.siglaPartido || "-",
-    uf: dep.siglaUf || "-",
-    id: dep.id || null,
+    nomeOriginal: n,
+    nomeApi: found.nomeApi || n,
+    partido: found.partido || "-",
+    uf: found.uf || "-",
+    id: found.id,
   };
 }
 
@@ -347,6 +368,30 @@ function countByKey(values) {
     map.set(key, (map.get(key) || 0) + 1);
   }
   return [...map.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+/** Conta pessoas distintas como aparecem na pauta (inclui quem ainda não casou na API). */
+function contarAutoresERelatoresDistintosNaPauta(itens) {
+  const autores = new Set();
+  const relatores = new Set();
+  const senadoKey = normalizeName("Autoria do Senado");
+  for (const row of itens) {
+    if (row.autorTipo !== "senado") {
+      const an = String(row.autor?.nomeOriginal || "").trim();
+      if (an && an !== "-") {
+        const k = normalizeName(an);
+        if (k && k !== senadoKey) autores.add(k);
+      }
+    }
+    if (row.tipoItem !== "requerimento") {
+      const rn = String(row.relator?.nomeOriginal || "").trim();
+      if (rn && rn !== "-") {
+        const k = normalizeName(rn);
+        if (k) relatores.add(k);
+      }
+    }
+  }
+  return { autoresUnicos: autores.size, relatoresUnicos: relatores.size };
 }
 
 function json(statusCode, body) {
@@ -432,10 +477,8 @@ exports.handler = async (event) => {
       }
     }
 
-    const autoresValidos = itens.filter((x) => x.autorTipo === "deputado_unico" && x.autor?.id);
-    const autoresUnicos = new Set(autoresValidos.map((x) => normalizeName(x.autor?.nomeOriginal || "")).filter(Boolean)).size;
     const relatoresValidos = [...relatoresPorItem.values()];
-    const relatoresUnicos = new Set(relatoresValidos.map((x) => normalizeName(x.nomeOriginal || "")).filter(Boolean)).size;
+    const { autoresUnicos, relatoresUnicos } = contarAutoresERelatoresDistintosNaPauta(itens);
     const partidosAutoresContabilizados = [];
     for (const setPartidos of autoresPartidosPorItem.values()) {
       for (const p of setPartidos.values()) partidosAutoresContabilizados.push(p);
@@ -443,17 +486,13 @@ exports.handler = async (event) => {
 
     const autoresPorPartido = countByKey(partidosAutoresContabilizados);
     const relatoresPorPartidoRows = countByKey(relatoresValidos.map((x) => x.partido));
-    const somaQtdAutoresPorPartido = autoresPorPartido.reduce((acc, r) => acc + (r.count || 0), 0);
-    const somaQtdRelatoresPorPartido = relatoresPorPartidoRows.reduce((acc, r) => acc + (r.count || 0), 0);
 
     return json(200, {
-      versaoRegra: "filtro-v5-pdf-noise",
+      versaoRegra: "filtro-v6-distinct-pauta",
       totalItens: parsedItems.length,
       totalLinhasDetalhe: itens.length,
       autoresUnicos,
       relatoresUnicos,
-      somaQtdAutoresPorPartido,
-      somaQtdRelatoresPorPartido,
       autoresPorPartido,
       relatoresPorPartido: relatoresPorPartidoRows,
       filtrosAplicados: agendaData.ignored,
