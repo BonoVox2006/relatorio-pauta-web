@@ -231,19 +231,50 @@ async function fetchDeputadosByLegislatura(idLegislatura) {
   return all;
 }
 
-/** Legislaturas recentes + anteriores: autores de PL antigo (ex.: 2013) só aparecem em listas por legislatura da época. */
-const ID_LEGISLATURAS_DEPUTADOS = [57, 56, 55, 54, 53, 52, 51];
+const DEPUTADOS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+let deputadosCache = { ts: 0, legsKey: "", data: null };
 
-async function fetchAllDeputados() {
+function inferLegislaturasNecessarias(parsedItems) {
+  // Mapeamento aproximado (Câmara) por ano.
+  // 57: 2023–2027, 56: 2019–2023, 55: 2015–2019, 54: 2011–2015, 53: 2007–2011, 52: 2003–2007, 51: 1999–2003
+  const years = [];
+  for (const it of parsedItems || []) {
+    const s = String(it?.projeto || "");
+    const m = s.match(/\b(19|20)\d{2}\b/g);
+    if (m) years.push(...m.map((x) => Number(x)).filter((n) => Number.isFinite(n)));
+  }
+  const minYear = years.length ? Math.min(...years) : null;
+
+  const legs = [57, 56, 55]; // padrão (rápido)
+  if (minYear !== null) {
+    if (minYear <= 2014) legs.push(54);
+    if (minYear <= 2010) legs.push(53);
+    if (minYear <= 2006) legs.push(52);
+    if (minYear <= 2002) legs.push(51);
+  }
+  return [...new Set(legs)].sort((a, b) => b - a);
+}
+
+async function fetchAllDeputados(legs) {
+  const normalizedLegs = Array.isArray(legs) && legs.length ? [...new Set(legs)].sort((a, b) => b - a) : [57, 56, 55];
+  const legsKey = normalizedLegs.join(",");
+  const now = Date.now();
+  if (deputadosCache.data && deputadosCache.legsKey === legsKey && now - deputadosCache.ts < DEPUTADOS_CACHE_TTL_MS) {
+    return deputadosCache.data;
+  }
+
+  // Paralelo por legislatura; cada legislatura já pagina em paralelo.
+  const chunks = await Promise.all(normalizedLegs.map((idLeg) => fetchDeputadosByLegislatura(idLeg)));
   const porId = new Map();
-  for (const idLeg of ID_LEGISLATURAS_DEPUTADOS) {
-    const chunk = await fetchDeputadosByLegislatura(idLeg);
+  for (const chunk of chunks) {
     for (const dep of chunk) {
       if (!dep?.id) continue;
       if (!porId.has(dep.id)) porId.set(dep.id, dep);
     }
   }
-  return [...porId.values()];
+  const data = [...porId.values()];
+  deputadosCache = { ts: now, legsKey, data };
+  return data;
 }
 
 /** Coleta nomes únicos que precisam de match (relatores + autores por item). */
@@ -429,7 +460,8 @@ exports.handler = async (event) => {
     const parsedItems = agendaData.blocks;
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
-    const deputados = await fetchAllDeputados();
+    const legs = inferLegislaturasNecessarias(parsedItems);
+    const deputados = await fetchAllDeputados(legs);
     const nomesParaEnriquecer = coletarNomesParaEnriquecer(parsedItems);
     const enrichCache = await buildEnrichCache(deputados, nomesParaEnriquecer);
 
