@@ -9,6 +9,7 @@ const itemsCard = document.getElementById("itemsCard");
 const metricItens = document.getElementById("metricItens");
 const metricAutores = document.getElementById("metricAutores");
 const metricRelatores = document.getElementById("metricRelatores");
+const metricNote = document.getElementById("metricNote");
 
 const autorPartidoBody = document.getElementById("autorPartidoBody");
 const relatorPartidoBody = document.getElementById("relatorPartidoBody");
@@ -20,6 +21,20 @@ function hide(el) { el.classList.add("hidden"); }
 function setStatus(text) {
   show(statusCard);
   statusText.textContent = text;
+}
+
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function nomeDeputado(p) {
+  if (!p) return "-";
+  const n = p.nomeApi || p.nomeOriginal;
+  return n ? esc(n) : "-";
 }
 
 function fillCountTable(tbody, rows) {
@@ -52,12 +67,12 @@ function renderItems(items) {
         : `${item.autor?.partido || "-"} / ${item.autor?.uf || "-"}`;
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${item.item || "-"}</td>
-      <td>${item.projeto || "-"}</td>
-      <td>${item.autor?.nomeOriginal || "-"}</td>
-      <td>${autorPartidoUf}</td>
-      <td>${item.relator?.nomeOriginal || "-"}</td>
-      <td>${item.relator?.partido || "-"} / ${item.relator?.uf || "-"}</td>
+      <td>${esc(item.item || "-")}</td>
+      <td>${esc(item.projeto || "-")}</td>
+      <td>${nomeDeputado(item.autor)}</td>
+      <td>${esc(autorPartidoUf)}</td>
+      <td>${nomeDeputado(item.relator)}</td>
+      <td>${esc(`${item.relator?.partido || "-"} / ${item.relator?.uf || "-"}`)}</td>
     `;
     itemsBody.appendChild(tr);
   }
@@ -67,6 +82,18 @@ function renderReport(data) {
   metricItens.textContent = String(data.totalItens || 0);
   metricAutores.textContent = String(data.autoresUnicos || 0);
   metricRelatores.textContent = String(data.relatoresUnicos || 0);
+  const sumAut =
+    typeof data.somaQtdAutoresPorPartido === "number"
+      ? data.somaQtdAutoresPorPartido
+      : (data.autoresPorPartido || []).reduce((a, r) => a + (r.count || 0), 0);
+  const sumRel =
+    typeof data.somaQtdRelatoresPorPartido === "number"
+      ? data.somaQtdRelatoresPorPartido
+      : (data.relatoresPorPartido || []).reduce((a, r) => a + (r.count || 0), 0);
+  if (metricNote) {
+    metricNote.textContent = `Soma das Qtd. na tabela “Autores por partido”: ${sumAut}. Soma na tabela “Relatores por partido”: ${sumRel}. Os números em destaque são deputados distintos encontrados na API (quem não casa fica “- / -” no detalhe).`;
+    metricNote.classList.remove("hidden");
+  }
   fillCountTable(autorPartidoBody, data.autoresPorPartido || []);
   fillCountTable(relatorPartidoBody, data.relatoresPorPartido || []);
   renderItems(data.itens || []);

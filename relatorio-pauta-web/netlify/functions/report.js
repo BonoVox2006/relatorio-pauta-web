@@ -2,6 +2,19 @@ const multipart = require("lambda-multipart-parser");
 const pdf = require("pdf-parse");
 const mammoth = require("mammoth");
 
+/** Remove cabeçalhos/rodapés que o pdf-parse costuma inserir no meio da ementa (datas, Pauta, URL). */
+function stripPdfNoise(s) {
+  let t = String(s || "");
+  t = t.replace(/\bhttps?:\/\/[^\s)]+/gi, " ");
+  t = t.replace(/\bwww\.camara\.leg\.br\/[^\s)]+/gi, " ");
+  t = t.replace(/\bcodteor=\d+/gi, " ");
+  t = t.replace(/\b\d{1,2}:\d{2}\s*Pauta\b/gi, " ");
+  t = t.replace(/\bPauta\s*-\s*[A-Z]{2,8}(?:\s*-\s*)?/gi, " ");
+  t = t.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:,\s*\d{1,2}:\d{2})?\b/g, " ");
+  t = t.replace(/\b\d{1,2}:\d{2}\b/g, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
 function normalizeName(name) {
   return String(name || "")
     .toUpperCase()
@@ -23,9 +36,11 @@ function cleanPersonName(raw) {
 
   const semRuido = semTitulo
     .replace(/\bhttps?:\/\/\S+/gi, " ")
+    .replace(/\bwww\.camara\.leg\.br\/\S+/gi, " ")
     .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
     .replace(/\b\d{1,2}:\d{2}\b/g, " ")
     .replace(/\bPauta\b[\s\S]*$/i, " ")
+    .replace(/\bPauta\s*-\s*[A-Z]{2,8}\b/gi, " ")
     .replace(/[^A-Za-zÀ-ÿ\s-]/g, " ");
 
   return semRuido.replace(/\s+/g, " ").trim();
@@ -144,10 +159,12 @@ function parseAgendaItems(text) {
     const itemStartIdx = match.index;
     const inRedacaoFinalSection = secaoAIdx >= 0 && secaoBIdx > secaoAIdx && itemStartIdx > secaoAIdx && itemStartIdx < secaoBIdx;
     const item = match[2];
-    const body = match[3].replace(/\s+/g, " ").trim();
-    if (!/^(PROJETO|REQUERIMENTO)\b/i.test(body)) continue;
+    const body = stripPdfNoise(match[3].replace(/\s+/g, " ").trim());
+    if (!/^(PROJETO|REQUERIMENTO|PROPOSTA\s+DE\s+EMENDA\s+A\s+CONSTITUICAO|PEC)\b/i.test(normalizeName(body))) {
+      continue;
+    }
     const projeto =
-      body.match(/((?:PROJETO|REQUERIMENTO)[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
+      body.match(/((?:PROJETO|REQUERIMENTO|PROPOSTA\s+DE\s+EMENDA\s+A\s+CONSTITUIÇÃO|PEC)[\s\S]*?)(?=\s+RELATOR(?:A)?:|\s+PARECER:|$)/i)?.[1]?.trim() || body;
     let autorRaw =
       body.match(/-\s+d[oa]s?\s+(.+?)\s+-\s+que/i)?.[1] ||
       body.match(/-\s+d[oa]s?\s+(.+?)\s+RELATOR(?:A)?:/i)?.[1] ||
@@ -343,15 +360,16 @@ function json(statusCode, body) {
 exports.handler = async (event) => {
   try {
     if (event.httpMethod !== "POST") return json(405, { error: "Metodo nao permitido." });
-    const parsed = await multipart.parse(event);
-    const file = (parsed.files || []).find((f) => f.fieldname === "pauta") || parsed.files?.[0];
+    /* Evitar duas declarações `const parsed` no mesmo escopo (SyntaxError no deploy antigo). */
+    const multipartData = await multipart.parse(event);
+    const file = (multipartData.files || []).find((f) => f.fieldname === "pauta") || multipartData.files?.[0];
     if (!file) return json(400, { error: "Arquivo nao enviado." });
 
     const text = await extractTextFromUpload(file);
     if (!text.trim()) return json(422, { error: "Nao foi possivel extrair texto do arquivo." });
 
-    const parsed = parseAgendaItems(text);
-    const parsedItems = parsed.blocks;
+    const agendaData = parseAgendaItems(text);
+    const parsedItems = agendaData.blocks;
     if (!parsedItems.length) return json(422, { error: "Nenhum item de projeto identificado na pauta enviada." });
 
     const deputados = await fetchAllDeputados();
@@ -423,15 +441,22 @@ exports.handler = async (event) => {
       for (const p of setPartidos.values()) partidosAutoresContabilizados.push(p);
     }
 
+    const autoresPorPartido = countByKey(partidosAutoresContabilizados);
+    const relatoresPorPartidoRows = countByKey(relatoresValidos.map((x) => x.partido));
+    const somaQtdAutoresPorPartido = autoresPorPartido.reduce((acc, r) => acc + (r.count || 0), 0);
+    const somaQtdRelatoresPorPartido = relatoresPorPartidoRows.reduce((acc, r) => acc + (r.count || 0), 0);
+
     return json(200, {
-      versaoRegra: "filtro-v4-ccjc",
+      versaoRegra: "filtro-v5-pdf-noise",
       totalItens: parsedItems.length,
       totalLinhasDetalhe: itens.length,
       autoresUnicos,
       relatoresUnicos,
-      autoresPorPartido: countByKey(partidosAutoresContabilizados),
-      relatoresPorPartido: countByKey(relatoresValidos.map((x) => x.partido)),
-      filtrosAplicados: parsed.ignored,
+      somaQtdAutoresPorPartido,
+      somaQtdRelatoresPorPartido,
+      autoresPorPartido,
+      relatoresPorPartido: relatoresPorPartidoRows,
+      filtrosAplicados: agendaData.ignored,
       itens,
     });
   } catch (error) {
