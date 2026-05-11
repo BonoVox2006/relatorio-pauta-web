@@ -46,12 +46,16 @@ function renderItems(items) {
     return;
   }
   for (const item of items) {
+    const autorPartidoUf =
+      item.autorTipo === "senado"
+        ? "Desconsiderado (Senado)"
+        : `${item.autor?.partido || "-"} / ${item.autor?.uf || "-"}`;
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${item.item || "-"}</td>
       <td>${item.projeto || "-"}</td>
       <td>${item.autor?.nomeOriginal || "-"}</td>
-      <td>${item.autor?.partido || "-"} / ${item.autor?.uf || "-"}</td>
+      <td>${autorPartidoUf}</td>
       <td>${item.relator?.nomeOriginal || "-"}</td>
       <td>${item.relator?.partido || "-"} / ${item.relator?.uf || "-"}</td>
     `;
@@ -87,11 +91,17 @@ uploadForm.addEventListener("submit", async (event) => {
   formData.append("pauta", fileInput.files[0]);
 
   try {
-    const response = await fetch("/.netlify/functions/report-v2", {method: "POST", body: formData});
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Falha ao gerar relatorio.");
+    const response = await fetch("/.netlify/functions/report", { method: "POST", body: formData });
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new Error(`Servidor retornou resposta inválida (HTTP ${response.status}).`);
+    }
+    if (!response.ok) throw new Error(payload.error || "Falha ao gerar relatório.");
     renderReport(payload);
-    setStatus("Relatorio gerado com sucesso.");
+    setStatus("Relatório gerado com sucesso.");
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "Erro inesperado.");
   }
