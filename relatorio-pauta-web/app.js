@@ -91,7 +91,7 @@ uploadForm.addEventListener("submit", async (event) => {
   formData.append("pauta", fileInput.files[0]);
 
   try {
-    const response = await fetch("/.netlify/functions/report", { method: "POST", body: formData });
+    const response = await fetch("/.netlify/functions/report-v2", { method: "POST", body: formData });
     const raw = await response.text();
     let payload = null;
     try {
