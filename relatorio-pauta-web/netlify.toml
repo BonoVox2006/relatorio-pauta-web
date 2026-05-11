@@ -4,5 +4,5 @@
 
 [[redirects]]
   from = "/api/report"
-  to = "/.netlify/functions/report"
+  to = "/.netlify/functions/report-v2"
   status = 200

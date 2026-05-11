@@ -9,8 +9,11 @@ function stripPdfNoise(s) {
   t = t.replace(/\bwww\.camara\.leg\.br\/[^\s)]+/gi, " ");
   t = t.replace(/\bcodteor=\d+/gi, " ");
   t = t.replace(/\b\d{1,2}:\d{2}\s*Pauta\b/gi, " ");
+  t = t.replace(/\b\d{1,2}_\d{2}\s*Pauta\b/gi, " ");
+  t = t.replace(/\b\d{1,2}h\d{2}\b/gi, " ");
   t = t.replace(/\bPauta\s*-\s*[A-Z]{2,8}(?:\s*-\s*)?/gi, " ");
-  t = t.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:,\s*\d{1,2}:\d{2})?\b/g, " ");
+  t = t.replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}:\d{2})?(?:,\s*\d{1,2}:\d{2})?\b/g, " ");
+  t = t.replace(/\b\d{1,2}_\d{2}\b/g, " ");
   t = t.replace(/\b\d{1,2}:\d{2}\b/g, " ");
   return t.replace(/\s+/g, " ").trim();
 }
@@ -37,7 +40,9 @@ function cleanPersonName(raw) {
   const semRuido = semTitulo
     .replace(/\bhttps?:\/\/\S+/gi, " ")
     .replace(/\bwww\.camara\.leg\.br\/\S+/gi, " ")
-    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}:\d{2})?\b/g, " ")
+    .replace(/\b\d{1,2}_\d{2}\b/g, " ")
+    .replace(/\b\d{1,2}h\d{2}\b/gi, " ")
     .replace(/\b\d{1,2}:\d{2}\b/g, " ")
     .replace(/\bPauta\b[\s\S]*$/i, " ")
     .replace(/\bPauta\s*-\s*[A-Z]{2,8}\b/gi, " ")
@@ -207,7 +212,8 @@ async function extractTextFromUpload(file) {
 }
 
 async function fetchDeputadosByLegislatura(idLegislatura) {
-  const maxPaginas = 10;
+  /* ~513 vagas por legislatura; 6 páginas × 100 cobre a lista completa. */
+  const maxPaginas = 6;
   const urls = Array.from({ length: maxPaginas }, (_, i) => {
     const pagina = i + 1;
     return `https://dadosabertos.camara.leg.br/api/v2/deputados?idLegislatura=${idLegislatura}&itens=100&pagina=${pagina}&ordem=ASC&ordenarPor=nome`;
@@ -225,17 +231,17 @@ async function fetchDeputadosByLegislatura(idLegislatura) {
   return all;
 }
 
+/** Legislaturas recentes + anteriores: autores de PL antigo (ex.: 2013) só aparecem em listas por legislatura da época. */
+const ID_LEGISLATURAS_DEPUTADOS = [57, 56, 55, 54, 53, 52, 51];
+
 async function fetchAllDeputados() {
-  const [leg57, leg56, leg55] = await Promise.all([
-    fetchDeputadosByLegislatura(57),
-    fetchDeputadosByLegislatura(56),
-    fetchDeputadosByLegislatura(55),
-  ]);
-  const candidatos = [...leg57, ...leg56, ...leg55];
   const porId = new Map();
-  for (const dep of candidatos) {
-    if (!dep?.id) continue;
-    if (!porId.has(dep.id)) porId.set(dep.id, dep);
+  for (const idLeg of ID_LEGISLATURAS_DEPUTADOS) {
+    const chunk = await fetchDeputadosByLegislatura(idLeg);
+    for (const dep of chunk) {
+      if (!dep?.id) continue;
+      if (!porId.has(dep.id)) porId.set(dep.id, dep);
+    }
   }
   return [...porId.values()];
 }
@@ -307,7 +313,8 @@ function findDeputadoByName(name, deputados) {
     else {
       const tokens = wanted.split(" ").filter((x) => x.length > 2);
       const hit = tokens.filter((t) => candidate.includes(t)).length;
-      score = hit * 10;
+      score = hit * 12;
+      if (tokens.length > 0 && hit === tokens.length) score += 28;
     }
     if (score > bestScore) {
       bestScore = score;
@@ -331,7 +338,7 @@ async function fetchDeputadoByQuery(name) {
 
   async function buscar(term) {
     const response = await fetch(
-      `https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(term)}&itens=20`,
+      `https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(term)}&itens=30`,
       { headers: { accept: "application/json" } }
     );
     if (!response.ok) return [];
@@ -341,14 +348,19 @@ async function fetchDeputadoByQuery(name) {
 
   let rows = await buscar(n);
   let found = findDeputadoByName(n, rows);
-  if (!found?.id) {
-    const parts = n.split(/\s+/).filter((p) => p.length >= 2);
-    if (parts.length >= 2) {
-      const sobrenome = parts[parts.length - 1];
-      if (sobrenome.length >= 4) {
-        rows = await buscar(sobrenome);
-        found = findDeputadoByName(n, rows);
-      }
+  const parts = n.split(/\s+/).filter((p) => p.length >= 2);
+  if (!found?.id && parts.length >= 2) {
+    const sobrenome = parts[parts.length - 1];
+    if (sobrenome.length >= 4) {
+      rows = await buscar(sobrenome);
+      found = findDeputadoByName(n, rows);
+    }
+  }
+  if (!found?.id && parts.length >= 2) {
+    const primeiro = parts[0];
+    if (primeiro.length >= 4) {
+      rows = await buscar(primeiro);
+      found = findDeputadoByName(n, rows);
     }
   }
   if (!found?.id) return null;
@@ -488,7 +500,7 @@ exports.handler = async (event) => {
     const relatoresPorPartidoRows = countByKey(relatoresValidos.map((x) => x.partido));
 
     return json(200, {
-      versaoRegra: "filtro-v6-distinct-pauta",
+      versaoRegra: "filtro-v8-strip-horario",
       totalItens: parsedItems.length,
       totalLinhasDetalhe: itens.length,
       autoresUnicos,
